@@ -5,15 +5,35 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/google/go-github/github"
 	"github.com/imagespy/registry-client"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/push"
 	log "github.com/sirupsen/logrus"
 )
 
+const (
+	promNamespace = "imagespy_hub_discoverer"
+)
+
 var (
-	imagespyAPIAddress = flag.String("imagespy.api", "https://localhost:8080", "Address of an imagespy API server")
-	logLevel           = flag.String("log.level", "error", "Log Level")
+	imagespyAPIAddress     = flag.String("imagespy.api", "https://localhost:8080", "Address of an imagespy API server")
+	logLevel               = flag.String("log.level", "error", "Log Level")
+	promPushgatewayAddress = flag.String("prometheus.pushgateway", "", "Address of a Prometheus Pushgateway to send metrics to (optional)")
+
+	promCompletionTime = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: promNamespace,
+		Name:      "last_completion_timestamp_seconds",
+		Help:      "The timestamp of the last completion of discover run, successful or not.",
+	})
+
+	promDuration = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: promNamespace,
+		Name:      "duration_seconds",
+		Help:      "The duration of the last update run in seconds.",
+	})
 )
 
 func mustInitLogging() {
@@ -28,6 +48,7 @@ func mustInitLogging() {
 func main() {
 	flag.Parse()
 	mustInitLogging()
+	start := time.Now()
 	httpClient := &http.Client{}
 	client := github.NewClient(httpClient)
 	_, dirContent, _, err := client.Repositories.GetContents(context.Background(), "docker-library", "official-images", "/library", &github.RepositoryContentGetOptions{Ref: "master"})
@@ -70,6 +91,17 @@ func main() {
 			default:
 				log.Errorf("discovering image '%s' failed: %s", imageName, resp.Status)
 			}
+		}
+	}
+
+	promCompletionTime.SetToCurrentTime()
+	promDuration.Set(time.Since(start).Seconds())
+	if *promPushgatewayAddress != "" {
+		registry := prometheus.NewRegistry()
+		registry.MustRegister(promCompletionTime, promDuration)
+		err := push.New(*promPushgatewayAddress, promNamespace).Gatherer(registry).Add()
+		if err != nil {
+			log.Fatalf("pushing to pushgateway: %s", err)
 		}
 	}
 }
