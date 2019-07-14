@@ -71,7 +71,8 @@ func main() {
 		repo := reg.Repository("library/" + *c.Name)
 		tags, err := repo.Tags.GetAll()
 		if err != nil {
-			log.Fatal(err)
+			log.Errorf("get all tags of repository '%s': %v", repo.Name, err)
+			continue
 		}
 
 		for _, tag := range tags {
@@ -80,7 +81,7 @@ func main() {
 			url := fmt.Sprintf("%s/v2/images/%s", *imagespyAPIAddress, imageName)
 			resp, err := httpClient.Post(url, "text/plain", nil)
 			if err != nil {
-				log.Fatal(err)
+				log.Fatalf("send discover request to imagespy api: %v", err)
 			}
 
 			switch resp.StatusCode {
